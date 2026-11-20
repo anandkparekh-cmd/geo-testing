@@ -184,6 +184,52 @@ Try it on a deliberately flawed synthetic test:
 `python -m geo_engine.synthetic.cli test --name leaky --areas BD,CA,DA,FY,HP,LE,RG,SP,WR,WS --start 2027-01-11 --days 21 --cooldown 0 --leakage 0.08 --reallocation 0.6`,
 then run `monitor` on `data/synthetic/test_leaky.csv`.
 
+## Run a test from its plan (phase 2)
+
+Each test lives in `geotests/<test_id>/` with one `test_plan.yaml`: the brief, data,
+design, launch, monitoring log, deviations, results and readout, plus the four gate
+approvals. Every step writes its reports into the same folder. The orchestrator's rules
+(`geo_engine/workflow.py`) decide what is allowed next; the agents will call the same
+commands.
+
+| Status | Next step | Who |
+|---|---|---|
+| draft | complete the brief, then approve **G1** | Brief agent, then you |
+| brief_approved | `data`: ingest and quality checks | Data agent |
+| data_ready | `design`, then `choose`, then approve **G2** | Design agent, then you |
+| design_approved | `launch`: lists and checklist, then approve **G3** (locks the plan) | Launch agent, then you |
+| locked / live | `monitor` weekly (spend only); `analyse` after the test | Monitoring, Analysis agents |
+| analysed | approve **G4** | you |
+| results_approved | readout | Readout agent |
+
+```bash
+P="python -m geo_engine.plan_cli"; G=geotests/jan_holdout
+$P new jan_holdout
+$P brief $G --question "Does Meta prospecting drive incremental new customers?" \
+    --channel meta_prospecting --test-type holdout --kpi new_customers --kpi-source "orders database" \
+    --success-metric cost_per_incremental --decision-rule "Keep if under £90 per incremental customer" \
+    --expected-lift -0.08
+$P approve $G G1 --by Anand
+$P data $G data/synthetic/history.csv
+$P design $G --exclude-region London
+$P choose $G                      # the recommended option, or --days 28 --geos 10
+$P approve $G G2 --by Anand
+$P launch $G --start 2027-02-15
+$P approve $G G3 --by Anand       # brief, data and design are now locked
+$P monitor $G spend_report.csv    # weekly
+$P analyse $G full_data.csv       # after the test
+$P approve $G G4 --by Anand
+$P status $G                      # any time: where the test is and what comes next
+```
+
+After G3 the brief, data and design are locked: a hash of them is stored, and any
+change, even a hand edit of the YAML, is refused unless logged with
+`$P deviation $G --section design --field cooldown_days --value 21 --reason "..." --by Anand`.
+
+The readout also lists unusual regional movements among the control areas during the
+test (`outside_events`), as context. They are common and already part of the noise the
+interval allows for, so they are not used to discount the result.
+
 ## Tests
 
 ```bash

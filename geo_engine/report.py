@@ -26,7 +26,8 @@ def _n(x: float) -> str:
 
 
 def lift_markdown(r: LiftResult, placebo: PlaceboResult | None = None, robustness: dict | None = None,
-                  truth: dict | None = None, title: str = "Test readout") -> str:
+                  truth: dict | None = None, title: str = "Test readout",
+                  events: list[dict] | None = None) -> str:
     t, conf = r.test, f"{1 - r.alpha:.0%}"
     days = (pd.Timestamp(r.test_window[1]) - pd.Timestamp(r.test_window[0])).days + 1
     lo, hi = t["lift_ci_pct"]
@@ -66,6 +67,15 @@ def lift_markdown(r: LiftResult, placebo: PlaceboResult | None = None, robustnes
                 f"the same dates: {placebo.space_false_positive_rate:.0%} looked significant; "
                 f"{placebo.space_p_value:.0%} stood out as much as the real result.",
                 f"- **Verdict:** {'; '.join(placebo.notes)}."]
+    if events:
+        out += [f"- **Outside events:** {len(events)} unusual regional movements among the control areas "
+                "during the test, listed for context. Events like these are common and are part of the noise "
+                "the interval allows for; look closer if one hits the same region as several test areas."]
+        out += [f"    - {e['region']}: {e['direction']} of {e['size_pct']:+.0f}% from {e['start']} to {e['end']}"
+                + (f" (test areas in this region: {', '.join(e['test_geos_in_region'])})"
+                   if e["test_geos_in_region"] else "") for e in events]
+    elif events is not None:
+        out.append("- **Outside events:** none found among the control areas during the test.")
     if robustness:
         out += ["", f"**Robustness: {robustness['verdict']}** (range {robustness['range_pct'][0]:+.1f}% to "
                 f"{robustness['range_pct'][1]:+.1f}%).", "", "| Alternative | Lift | Same direction |",

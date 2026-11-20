@@ -20,7 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .analysis import estimate_lift, placebo_test, robustness_suite
+from .analysis import estimate_lift, outside_events, placebo_test, robustness_suite
 from .ingest import ingest
 from .launch import export_targeting
 from .monitoring import SpendPlan, leakage_check, monitoring_markdown, pacing_report
@@ -96,11 +96,12 @@ def cmd_analyse(args) -> None:
     truth = json.loads(Path(args.truth).read_text()) if args.truth else None
     name = Path(args.file).name.split(".")[0]
     (ROOT / "reports").mkdir(exist_ok=True)
-    md = lift_markdown(lift, placebo, robust, truth, title=f"Test readout: {name}")
+    events = outside_events(geo, lift)
+    md = lift_markdown(lift, placebo, robust, truth, title=f"Test readout: {name}", events=events)
     chart = lift_chart(lift, ROOT / "reports" / f"{name}_lift.png")
     (ROOT / "reports" / f"{name}_lift.md").write_text(md + f"\n\n![Result]({chart.name})\n")
     payload = {"source": result.source, "data_version": result.data_version, **lift.to_dict(),
-               "placebo": placebo.to_dict(), "robustness": robust}
+               "placebo": placebo.to_dict(), "robustness": robust, "outside_events": events}
     (ROOT / "reports" / f"{name}_lift.json").write_text(json.dumps(payload, indent=2, default=str))
     lift.daily.to_csv(ROOT / "reports" / f"{name}_lift_daily.csv", index=False)
     print(md)
