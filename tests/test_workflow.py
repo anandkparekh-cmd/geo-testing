@@ -105,8 +105,16 @@ def test_gates_and_readout_close_the_test(run):
     with pytest.raises(PlanError, match="already approved"):
         wf.approve(plan, "G3", "Anand")
     wf.approve(plan, "G4", "Anand")
-    wf.set_readout(plan, "Keep spend", "Anand", "2027-07-01")
+    with pytest.raises(PlanError, match="decision must be"):
+        wf.write_readout(plan, "maybe", "Keep spend", "Anand")
+    report = wf.write_readout(plan, "keep", "Keep spend: cost per incremental customer is under target.", "Anand")
     assert plan.status == "closed" and wf.next_step(plan)["step"] == "done"
+    md = (plan.folder / report).read_text()
+    assert "Decision: KEEP" in md and "For the MMM" in md and "Retest by 2027-09-05" in md
+    mmm = plan.section("readout")["mmm_calibration"]
+    lo, hi = mmm["interval"]
+    assert lo <= mmm["incremental_kpi_per_1000_gbp"] <= hi and mmm["incremental_kpi_per_1000_gbp"] > 0
+    assert wf.list_tests(plan.folder.parent)[0]["status"] == "closed"
 
 
 def test_out_of_order_steps_are_refused(files, tmp_path):

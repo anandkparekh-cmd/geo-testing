@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m geo_engine.plan_cli *)",
+      "Bash(python3 -m geo_engine.plan_cli *)",
+      "Bash(python -m geo_engine.cli *)",
+      "Bash(python3 -m geo_engine.cli *)",
+      "Bash(python -m geo_engine.synthetic.cli *)",
+      "Bash(python3 -m geo_engine.synthetic.cli *)",
+      "Bash(python -m pytest *)",
+      "Bash(python3 -m pytest *)"
+    ],
+    "ask": [
+      "Bash(python -m geo_engine.plan_cli approve *)",
+      "Bash(python3 -m geo_engine.plan_cli approve *)",
+      "Bash(python -m geo_engine.plan_cli deviation *)",
+      "Bash(python3 -m geo_engine.plan_cli deviation *)",
+      "Bash(python -m geo_engine.plan_cli readout *)",
+      "Bash(python3 -m geo_engine.plan_cli readout *)"
+    ],
+    "deny": [
+      "Edit(/geotests/**/test_plan.yaml)",
+      "Read(/data/_ground_truth/**)",
+      "Read(.env)",
+      "Read(.env.*)"
+    ]
+  }
+}

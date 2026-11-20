@@ -1,15 +1,57 @@
 # Geo incrementality agent system
 
-Phase 1, step 1: the synthetic data generator. The spec is in the Claude doc
-"Geo Incrementality Agent System: Spec".
+Runs geo incrementality tests end to end: brief, data checks, test design, launch,
+monitoring, analysis and readout. `geo_engine/` holds the statistics (no LLM calls);
+`.claude/` holds the Claude Code agents that run each step with you, on your Claude
+subscription. The spec is in the Claude doc "Geo Incrementality Agent System: Spec".
 
-## Setup
+## Run it with Claude Code
+
+1. Install Python 3.11 or later ([python.org](https://www.python.org/downloads/)) and
+   [Claude Code](https://docs.claude.com/en/docs/claude-code/overview).
+2. Get the code and its packages:
+   ```bash
+   git clone https://github.com/anandkparekh-cmd/geo-testing
+   cd geo-testing
+   python3 -m pip install -r requirements.txt
+   ```
+3. Start Claude Code in the folder (`claude`) and log in with your Claude account
+   (`/login`), so it runs on your subscription. If an `ANTHROPIC_API_KEY` environment
+   variable is set, Claude Code uses that key instead and bills the API: unset it.
+4. Try it on synthetic data first:
+   ```bash
+   python3 -m geo_engine.synthetic.cli history
+   ```
+   then, in Claude Code: `/geo-test demo data/synthetic/history.csv`.
+
+| Command | What it does |
+|---|---|
+| `/geo-test <test_id> [file or notes]` | Start a test, or run its next step, then stop at your next decision |
+| `/geo-status [test_id]` | Every test (or one) with its status and next step |
+| `/geo-approve <test_id> <G1-G4> [note]` | Record your approval of a gate; only you can run it |
+
+Seven agents in `.claude/agents/` each own a step: `geo-brief`, `geo-data`,
+`geo-design`, `geo-launch`, `geo-monitoring`, `geo-analysis`, `geo-readout`.
+
+**What is enforced, not just asked for** (`.claude/settings.json`): engine commands
+run without prompts; approving a gate, logging a deviation and recording the readout
+always ask you first; editing a `test_plan.yaml` directly and reading the synthetic
+ground truth are blocked. On top of that, the test plan refuses steps out of order and
+changes to locked sections, and monitoring reads spend only. The remaining rules (no
+peeking at a live test's results, numbers only from the engine's reports) are
+instructions in `CLAUDE.md` and the agent files.
+
+## Engine reference
+
+Everything below can also be run directly from the command line, without the agents.
+
+### Setup
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-## Generate data
+### Generate data
 
 ```bash
 # Two years of business-as-usual history (2024-11-18 to 2026-11-15)
@@ -24,7 +66,7 @@ python -m geo_engine.synthetic.cli test --name hu --areas B,LS,NG --start 2027-0
 
 `--seed` (default 42) changes the whole synthetic world. Same seed, same data.
 
-## Outputs
+### Outputs
 
 | File | What it is | Who can read it |
 |---|---|---|
@@ -38,7 +80,7 @@ python -m geo_engine.synthetic.cli test --name hu --areas B,LS,NG --start 2027-0
 Your real data uses the same CSV format, so swapping it in later means pointing
 `ingest` at your file instead of `history.csv`.
 
-## What the synthetic world contains
+### What the synthetic world contains
 
 - 121 real UK postcode areas, split into about 700 districts (district numbers are illustrative).
 - About 4,000 conversions and GBP 25,000 of test-channel spend per day nationally.
@@ -47,7 +89,7 @@ Your real data uses the same CSV format, so swapping it in later means pointing
 - Regional promos and local outages, to exercise the data quality checks.
 - Test-channel spend drives about 10% of conversions, with carryover and diminishing returns.
 
-## Check a data file (synthetic or real)
+### Check a data file (synthetic or real)
 
 ```bash
 python -m geo_engine.cli quality data/synthetic/history.csv
@@ -73,7 +115,7 @@ This runs three engine functions in turn:
 Outputs: `reports/<file>_quality.md` (readable), `reports/<file>_quality.json` (for the
 agents) and `data/clean/<file>_<unit>.csv` (the area-level data used from here on).
 
-## Design a test
+### Design a test
 
 ```bash
 python -m geo_engine.cli design data/synthetic/history.csv --expected-lift -0.08 --exclude-region London
@@ -95,7 +137,7 @@ Runs the quality checks, then:
 Outputs: `reports/<file>_design.md`, `reports/<file>_design.json` and every candidate
 in `reports/<file>_design_candidates.csv`.
 
-### Is the MDE honest?
+#### Is the MDE honest?
 
 `python scripts/validate_power.py` builds 10 fresh synthetic worlds, picks a design in
 each, then runs real 28-day holdouts after the history ends and compares the estimation
@@ -109,7 +151,7 @@ error with the prediction. Result (`reports/power_validation.json`), 20 tests pe
 Raw predictions land within about 10% of reality, and the chosen designs beat random
 ones by about a quarter.
 
-## Read a test
+### Read a test
 
 ```bash
 python -m geo_engine.cli analyse data/synthetic/test_demo.csv --test-geos AB,CF,CW,G,HD,KW,LE,ME,PL,S \
@@ -132,7 +174,7 @@ the daily series `_lift_daily.csv`.
 Demo result: true effect -8.52% (-1,102 conversions); estimate -8.40% (-1,097), 90%
 interval -12.9% to -3.9%. Cost per incremental conversion: true £70.98, estimate £73.85.
 
-### Are the intervals honest?
+#### Are the intervals honest?
 
 `python scripts/validate_lift.py` (and `... fresh` for new worlds) runs 80 estimates in
 10 synthetic worlds: real 28-day holdouts and periods with no test, on random designs.
@@ -146,7 +188,7 @@ Without the widening and t values, intervals held the truth only 82.5% of the ti
 no-test periods were called significant 20% of the time. With them, the intervals are
 honest to slightly cautious.
 
-## Launch a test
+### Launch a test
 
 ```bash
 python -m geo_engine.cli launch data/synthetic/history.csv --name jan_holdout \
@@ -165,7 +207,7 @@ python -m geo_engine.cli launch data/synthetic/history.csv --name jan_holdout \
 Lists only hold districts that appear in your data: check them against a full UK
 postcode district list before launch.
 
-## Monitor a live test
+### Monitor a live test
 
 ```bash
 python -m geo_engine.cli monitor platform_location_report.csv --name jan_holdout \
@@ -184,7 +226,7 @@ Try it on a deliberately flawed synthetic test:
 `python -m geo_engine.synthetic.cli test --name leaky --areas BD,CA,DA,FY,HP,LE,RG,SP,WR,WS --start 2027-01-11 --days 21 --cooldown 0 --leakage 0.08 --reallocation 0.6`,
 then run `monitor` on `data/synthetic/test_leaky.csv`.
 
-## Run a test from its plan (phase 2)
+### Run a test from its plan (phase 2)
 
 Each test lives in `geotests/<test_id>/` with one `test_plan.yaml`: the brief, data,
 design, launch, monitoring log, deviations, results and readout, plus the four gate
@@ -230,7 +272,7 @@ The readout also lists unusual regional movements among the control areas during
 test (`outside_events`), as context. They are common and already part of the noise the
 interval allows for, so they are not used to discount the result.
 
-## Tests
+### Tests
 
 ```bash
 python -m pytest -q
