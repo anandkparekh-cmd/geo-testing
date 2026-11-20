@@ -12,7 +12,7 @@ Flow and owners:
   locked / live    Monitoring agent runs run_monitor weekly; after the test,
                    Analysis agent runs run_analysis           -> analysed
   analysed         you approve G4                             -> results_approved
-  results_approved Readout agent writes the readout           -> closed
+  results_approved Readout agent writes the readout (write_readout) -> closed
 """
 
 from __future__ import annotations
@@ -331,15 +331,95 @@ def run_analysis(plan: TestPlan, file: str, column_map: dict | None = None) -> d
     return results
 
 
-def set_readout(plan: TestPlan, recommendation: str, by: str, retest_date: str | None = None,
-                mmm_calibration: dict | None = None) -> None:
-    """Readout agent (phase 2, step 3): record the recommendation and close the test."""
+DECISIONS = ("keep", "scale", "reduce", "cut", "retest", "inconclusive")
+
+
+def mmm_calibration(plan: TestPlan) -> dict | None:
+    """Incremental KPI per £1,000 of spend change, with its interval, for MMM calibration."""
+    r = plan.section("results")
+    sp = r.get("spend") or {}
+    change = sp.get("spend_change_gbp")
+    if not change:
+        return None
+    per = lambda x: round(1000 * x / change, 3)
+    lo, hi = sorted(per(x) for x in r["incremental_kpi_ci"])
+    kind = plan.section("brief")["test_type"]
+    return {"incremental_kpi_per_1000_gbp": per(r["incremental_kpi"]), "interval": [lo, hi],
+            "kind": "average (holdout: all spend off)" if kind == "holdout" else "marginal (heavy-up: extra spend)",
+            "period": [plan.section("launch")["start"], plan.section("launch")["end"]],
+            "geos": plan.section("design")["treatment_geos"]}
+
+
+def write_readout(plan: TestPlan, decision: str, recommendation: str, by: str,
+                  retest_date: str | None = None) -> str:
+    """Readout agent: record the decision and recommendation, write readout.md, close the test."""
     if plan.status != "results_approved":
         raise PlanError("the readout follows approved results (G4)")
-    plan.update("readout", {"recommendation": recommendation, "by": by, "at": now(),
-                            "retest_date": retest_date, "mmm_calibration": mmm_calibration})
+    if decision not in DECISIONS:
+        raise PlanError(f"decision must be one of {DECISIONS}")
+    if not recommendation.strip():
+        raise PlanError("the readout needs a recommendation")
+    r, brief, launch = plan.section("results"), plan.section("brief"), plan.section("launch")
+    retest = retest_date or str((pd.Timestamp(launch["end"]) + pd.Timedelta(days=182)).date())
+    mmm = mmm_calibration(plan)
+    sp = r.get("spend") or {}
+    lo, hi = r["lift_ci_pct"]
+    lines = [f"# Readout: {plan.d['test_id']}", "",
+             f"**Decision: {decision.upper()}.** {recommendation}", "",
+             f"Question: {brief['question']}", "",
+             "## What the test found", "",
+             f"- Lift, test period ({launch['start']} to {launch['end']}): {r['lift_pct']:+.1f}% "
+             f"(90% interval {lo:+.1f}% to {hi:+.1f}%), {'statistically clear' if r['significant'] else 'not distinguishable from no effect'}.",
+             f"- Incremental {brief['kpi']}: {r['incremental_kpi']:+,.0f} "
+             f"({r['incremental_kpi_ci'][0]:+,.0f} to {r['incremental_kpi_ci'][1]:+,.0f})."]
+    if "cost_per_incremental_kpi_gbp" in sp:
+        ci = sp.get("cost_per_incremental_kpi_ci_gbp")
+        lines.append(f"- Cost per incremental {brief['kpi']}: £{sp['cost_per_incremental_kpi_gbp']:,.2f}"
+                     + (f" (£{ci[0]:,.2f} to £{ci[1]:,.2f})." if ci else "."))
+    lines += ["", "## Against the decision rule", "", f"> {brief['decision_rule']}", ""]
+    caveats = []
+    if r.get("execution_flags"):
+        caveats.append("Monitoring flagged execution issues: " + "; ".join(r["execution_flags"]) + ".")
+    if plan.d["deviations"]:
+        caveats.append(f"{len(plan.d['deviations'])} deviation(s) from the locked plan: "
+                       + "; ".join(f"{d['section']}.{d['field']} {d['from']} -> {d['to']} ({d['reason']})"
+                                   for d in plan.d["deviations"]) + ".")
+    if not r.get("robust", True):
+        caveats.append(f"Robustness checks disagree on direction (range {r['robust_range_pct']}).")
+    if not r.get("placebo_passed", True):
+        caveats.append("Placebo checks raised a warning: " + "; ".join(r.get("placebo_notes", [])) + ".")
+    if r.get("outside_events"):
+        caveats.append(f"{len(r['outside_events'])} regional movement(s) among controls during the test "
+                       "(listed in results.md; normally within the interval's allowance).")
+    lines += ["## Caveats", ""] + ([f"- {c}" for c in caveats] or ["- None recorded."])
+    if mmm:
+        lines += ["", "## For the MMM", "",
+                  f"{mmm['incremental_kpi_per_1000_gbp']:+,.2f} incremental {brief['kpi']} per £1,000 of spend "
+                  f"(interval {mmm['interval'][0]:+,.2f} to {mmm['interval'][1]:+,.2f}), {mmm['kind']}, "
+                  f"{mmm['period'][0]} to {mmm['period'][1]}, in {len(mmm['geos'])} test areas."]
+    lines += ["", "## Next", "", f"- Retest by {retest}: results drift as spend, creative and competition change.",
+              "", f"Signed off by {by}. Full results: results.md. Audit trail: test_plan.yaml."]
+    report = _write(plan, "readout.md", "\n".join(lines) + "\n")
+    plan.update("readout", {"decision": decision, "recommendation": recommendation, "by": by, "at": now(),
+                            "retest_date": retest, "mmm_calibration": mmm, "report": report})
     plan.set_status("closed")
     plan.save()
+    return report
+
+
+def list_tests(folder: str | Path = "geotests") -> list[dict]:
+    """Every test plan under folder, with its status and next step."""
+    out = []
+    for path in sorted(Path(folder).glob("*/test_plan.yaml")):
+        try:
+            plan = TestPlan.load(path)
+            n = next_step(plan)
+            out.append({"test_id": plan.d["test_id"], "status": plan.status, "next": n["action"],
+                        "who": n["who"], "path": str(path.parent)})
+        except PlanError as e:
+            out.append({"test_id": path.parent.name, "status": "error", "next": str(e), "who": "you",
+                        "path": str(path.parent)})
+    return out
 
 
 # ---- what next -------------------------------------------------------------------------------
@@ -380,7 +460,7 @@ def next_step(plan: TestPlan) -> dict:
     if st == "analysed":
         return {"who": "you", "step": "approve G4", "action": "review results.md and approve the results (G4)"}
     if st == "results_approved":
-        return {"who": "agent", "agent": "readout", "step": "set_readout",
+        return {"who": "agent", "agent": "readout", "step": "write_readout",
                 "action": "write the recommendation and close the test"}
     return {"who": "nobody", "step": "done", "action": "the test is closed"}
 

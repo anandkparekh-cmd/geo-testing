@@ -14,7 +14,10 @@
   python -m geo_engine.plan_cli monitor geotests/jan_holdout spend_report.csv
   python -m geo_engine.plan_cli analyse geotests/jan_holdout full_data.csv
   python -m geo_engine.plan_cli approve geotests/jan_holdout G4 --by Anand
+  python -m geo_engine.plan_cli readout geotests/jan_holdout --decision keep \
+      --recommendation "..." --by Anand
   python -m geo_engine.plan_cli status geotests/jan_holdout
+  python -m geo_engine.plan_cli list
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from .plan import PlanError, TestPlan
 FOLDER = "geotests"
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Run a geo test step by step from its test plan")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -90,6 +93,16 @@ def main(argv=None) -> int:
     an.add_argument("plan")
     an.add_argument("file")
 
+    ro = sub.add_parser("readout", help="record the decision and recommendation, close the test")
+    ro.add_argument("plan")
+    ro.add_argument("--decision", required=True, choices=wf.DECISIONS)
+    ro.add_argument("--recommendation", required=True)
+    ro.add_argument("--by", required=True)
+    ro.add_argument("--retest-date")
+
+    ls = sub.add_parser("list", help="every test and what comes next")
+    ls.add_argument("--folder", default=FOLDER)
+
     dv = sub.add_parser("deviation", help="change a locked field, with a reason")
     dv.add_argument("plan")
     dv.add_argument("--section", required=True, choices=["brief", "data", "design"])
@@ -97,12 +110,22 @@ def main(argv=None) -> int:
     dv.add_argument("--value", required=True, help="YAML value, e.g. 21 or [BD, CA]")
     dv.add_argument("--reason", required=True)
     dv.add_argument("--by", required=True)
+    return p
 
-    args = p.parse_args(argv)
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         if args.cmd == "new":
             plan = TestPlan.new(args.test_id, args.folder)
             print(f"Created {plan.path}")
+        elif args.cmd == "list":
+            tests = wf.list_tests(args.folder)
+            if not tests:
+                print(f"No tests in {args.folder}/ yet. Start one with: new <test_id>")
+            for t in tests:
+                print(f"{t['test_id']}: {t['status']}. Next ({t['who']}): {t['next']}")
+            return 0
         else:
             plan = TestPlan.load(args.plan)
             if args.cmd == "status":
@@ -144,6 +167,9 @@ def main(argv=None) -> int:
             elif args.cmd == "analyse":
                 out = wf.run_analysis(plan, args.file)
                 print(f"Lift {out['lift_pct']}% (90% interval {out['lift_ci_pct']}). Report: {out['report']}")
+            elif args.cmd == "readout":
+                report = wf.write_readout(plan, args.decision, args.recommendation, args.by, args.retest_date)
+                print(f"Readout written: {report}")
             elif args.cmd == "deviation":
                 plan.record_deviation(args.section, args.field, yaml.safe_load(args.value), args.reason, args.by)
                 plan.save()
