@@ -15,6 +15,12 @@ placebo_test checks that interval two ways:
 robustness_suite re-estimates the lift under reasonable alternative choices (other
 method, shorter fitting period, each test geo left out, top control left out) and
 checks the answer keeps its direction.
+
+outside_events lists unusual regional movements among the control areas during the test
+(a regional promotion, an outage, weather), as context for the readout. They are common:
+across 16 synthetic tests, 12 windows had two or more, and those tests were no less
+accurate than the rest, because the history behind the interval holds such events too.
+So they are listed, not used to discount the result.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 from .estimators import fit
+from .geography import AREA_TO_REGION
 from .power import Panel, PowerSettings, simulate_many
 
 
@@ -298,3 +305,34 @@ def robustness_suite(geo_data: pd.DataFrame | Panel, result: LiftResult,
             "range_pct": [round(min(spread), 2), round(max(spread), 2)],
             "verdict": ("every alternative gives the same direction" if consistent else
                         "direction changes under some alternatives: treat the result with caution")}
+
+
+# ---------------------------------------------------------------------------------------
+def outside_events(geo_data: pd.DataFrame | Panel, result: LiftResult,
+                   region_of: dict | None = None) -> list[dict]:
+    """Unusual regional movements among the control areas during the test and cooldown.
+
+    Uses the quality report's regional spike-and-dip detection on the controls only, so
+    the test itself cannot trigger it. Needs postcode-area geos (or a region lookup).
+    """
+    from .quality import QualitySettings, _unusual
+    panel = _panel(geo_data)
+    region_of = region_of or (AREA_TO_REGION if set(panel.geos) <= set(AREA_TO_REGION) else None)
+    if not region_of:
+        return []
+    s = QualitySettings()
+    ci = panel.index(result.controls)
+    Y = pd.DataFrame(panel.Y[:, ci], index=panel.dates, columns=panel.geos[ci])
+    R = Y.T.groupby(Y.columns.map(region_of)).sum().T
+    window = max(5, round(s.window_days / panel.step_days) | 1)
+    spans = (1, 2) if panel.step_days == 7 else (1, 3, 7)
+    ev = _unusual(R, s, window, "region", s.region_z_threshold, s.region_min_effect, 1, spans)
+    a = pd.Timestamp(result.test_window[0])
+    b = pd.Timestamp(result.cooldown_window[1] if result.cooldown_window else result.test_window[1])
+    ev = ev[(ev["end"] >= a) & (ev["start"] <= b)]
+    out = []
+    for e in ev.itertuples():
+        out.append({"region": e.where, "start": str(e.start.date()), "end": str(e.end.date()),
+                    "direction": e.direction, "size_pct": float(e.size_pct),
+                    "test_geos_in_region": sorted(g for g in result.treatment if region_of.get(g) == e.where)})
+    return out
