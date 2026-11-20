@@ -1,0 +1,18 @@
+{
+  "random": {
+    "tests": 20,
+    "actual_rmse_pct": 2.38,
+    "predicted_rmse_full_pct": 2.13,
+    "predicted_rmse_select_half_pct": 2.17,
+    "predicted_rmse_report_half_pct": 2.09,
+    "mean_error_pct": 0.41
+  },
+  "selected": {
+    "tests": 20,
+    "actual_rmse_pct": 1.8,
+    "predicted_rmse_full_pct": 1.74,
+    "predicted_rmse_select_half_pct": 1.05,
+    "predicted_rmse_report_half_pct": 2.2,
+    "mean_error_pct": -0.34
+  }
+}

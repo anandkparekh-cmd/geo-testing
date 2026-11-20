@@ -1,0 +1,23 @@
+{
+  "estimates": 80,
+  "coverage_of_90pct_interval": 0.925,
+  "coverage_holdout": 0.95,
+  "coverage_no_test": 0.9,
+  "false_positive_rate_no_test": 0.1,
+  "detection_rate_holdout": 0.975,
+  "actual_rmse_pct": 2.33,
+  "predicted_rmse_pct": 2.14,
+  "mean_true_holdout_lift_pct": -8.44,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}
